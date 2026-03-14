@@ -1,6 +1,7 @@
 .section .text
 .globl chacha20_quarter_round
 .globl chacha20_block
+.globl chacha20_encrypt
 
 #Esta funcion fue implementada para entender de forma sencilla como funciona el quarter_round usando punteros
 /***chacha20_quarter_round:
@@ -133,7 +134,7 @@
 #Funcion del Block oficial
     chacha20_block:
     #Se reserva espacio en el stack y se guardan registros (prologo)
-    addi sp, sp, -84
+    addi sp, sp, -84 #Se reserva espacio en el stack
     sw ra, 0(sp) #return address
     sw s0, 4(sp) #contador del loop
     sw s1, 8(sp) #puntero state original
@@ -395,3 +396,79 @@
     lw s3, 16(sp)
     addi sp, sp, 84
     ret
+
+    #Funcion del encrypt
+    chacha20_encrypt:
+    addi sp, sp, -96 #se reserva esapcio en el stack
+    sw ra, 0(sp) #return address
+    sw s0, 4(sp) #puntero a state
+    sw s1, 8(sp) #puntero a plaintext
+    sw s2, 12(sp) #puntero a ciphertext
+    sw s3, 16(sp) #puntero a length restante
+    sw s4, 20(sp) #direccion del keystream
+    sw s5, 24(sp) #condicional del if
+    sw s6, 28(sp) #guarda la variable s6
+
+    mv s0, a0 #s0 = state
+    mv s1, a1 #s1 = plaintext
+    mv s2, a2 #s2 = ciphertext
+    mv s3, a3 #s3 = length 
+
+    addi s4, sp, 32 #empieza el keystream
+    li s5, 64 #condicion del if
+
+    for_loop:
+    beqz s3, fin_loop           # si length == 0, terminar
+
+    mv   a0, s0                 # a0 = state
+    mv   a1, s4                 # a1 = keystream buffer
+    call chacha20_block
+
+    #Determina cuantos bytes hay que procesar
+    blt  s3, s5, use_remainder  # si s3 < 64 usar el resto
+    li   t0, 64                 # procesar 64 bytes completos
+    j    do_xor
+    use_remainder:
+        mv   t0, s3                 # procesar solo lo que queda
+    do_xor:
+        mv   s6, t0                 # guardar cuantos bytes se van a procesar
+
+    xor_loop:
+        lbu  t1, 0(s1)              # leer byte de plaintext
+        lbu  t2, 0(s4)              # leer byte de keystream
+        xor  t1, t1, t2             # cifrar
+        sb   t1, 0(s2)              # escribir en ciphertext
+
+        addi s1, s1, 1              # avanzar plaintext
+        addi s2, s2, 1              # avanzar ciphertext
+        addi s4, s4, 1              # avanzar keystream
+
+        addi t0, t0, -1             # decrementar contador
+        bnez t0, xor_loop           # repetir si quedan bytes
+
+        #Actualizar los datos para la siguiente iteracion
+        sub  s3, s3, s6             # length -= bytes procesados
+
+        lw   t1, 48(s0)             # leer state[12] (counter)
+        addi t1, t1, 1              # counter += 1
+        sw   t1, 48(s0)             # guardar counter
+
+        addi s4, sp, 28             # resetear s4 al inicio del keystream
+
+        j    for_loop               # siguiente iteracion
+
+    fin_loop:
+        # --- Epilogo ---
+        lw   ra, 0(sp)
+        lw   s0, 4(sp)
+        lw   s1, 8(sp)
+        lw   s2, 12(sp)
+        lw   s3, 16(sp)
+        lw   s4, 20(sp)
+        lw   s5, 24(sp)
+        lw   s6, 28(sp)
+        addi sp, sp, 96             # liberar stack (92 + 4 por s6)
+        ret
+        
+
+        

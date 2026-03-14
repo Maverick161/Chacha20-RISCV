@@ -5,7 +5,8 @@ typedef unsigned int  uint32_t;
 typedef unsigned char uint8_t;
 
 void chacha20_quarter_round(uint32_t *state, int a, int b, int c, int d);
-
-void chacha20_block(uint32_t *state, uint8_t *output); 
+void chacha20_block(uint32_t *state, uint8_t *output);
+void chacha20_encrypt(uint32_t *state, uint8_t *plaintext,
+                      uint8_t *ciphertext, uint32_t length);
 
 #endif
