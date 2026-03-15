@@ -162,7 +162,7 @@ qemu-system-riscv32 -machine virt -nographic -bios none -kernel chacha20.elf
 
 Se implementaron casos de prueba específicos que utilizan los valores de entrada definidos en el RFC:
 
-![Quarter Round Test](docs/quarter_round.png)
+![Quarter Round Test](docs/quarter_round_test.png)
 
 Como se puede observar en la imagen la salida obtenida luego de la implementación del algoritmo es la adecuada según los casos de prueba que se encuentran el RFC. Verificando que la operación quarter round fue implementada correctamente.
 
