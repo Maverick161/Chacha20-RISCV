@@ -323,3 +323,182 @@ memoria `sp+20..sp+83` en `chacha20_block`.
 | Temporales de cómputo | `t0`–`t5` | No (caller-saved) |
 | Variables de larga vida | `s0`–`s6` | Sí (callee-saved, guardados en stack) |
 | Estado de 16 palabras | Stack (`sp+20`) | N/A — vive en memoria |
+
+# Evidencias de Ejecución con GDB/QEMU
+
+Todas las sesiones de depuración fueron realizadas dentro del entorno Docker `rvqemu`,
+conectando `gdb-multiarch` al puerto 1234 expuesto por QEMU con las flags `-s -S`.
+El binario fue compilado con `-g3 -gdwarf-4` para obtener símbolos completos.
+
+Comando de conexión utilizado en todas las sesiones:
+
+```bash
+gdb-multiarch chacha20.elf
+(gdb) set architecture riscv:rv32
+(gdb) target remote localhost:1234
+```
+
+---
+## Evidencia 1 — Estado del bloque antes y después de las 20 rondas
+
+Para capturar el estado interno del algoritmo se colocaron dos breakpoints:
+- `break round_loop` — pausa al inicio de cada ronda, capturando el estado inicial antes de
+  que comience cualquier transformación.
+- `break round_end` — pausa al finalizar las 20 rondas, antes de la suma final con el estado
+  original.
+
+El test utilizado fue `test_chacha20_block` (RFC 8439 2.3.2), con la clave del RFC,
+`counter=1` y `nonce=0x09000000 0x4a000000 0x00000000`.
+
+![Estado inicial y despues de las 20 rondas](docs/Evidencia1.png)
+
+**Estado inicial** (`working_state` antes de la ronda 1, inspeccionado con `x/16xw $s3`):
+
+```
+0x61707865  0x3320646e  0x79622d32  0x6b206574   ← constantes "expand 32-byte k"
+0x03020100  0x07060504  0x0b0a0908  0x0f0e0d0c   ← clave bytes  0-15
+0x13121110  0x17161514  0x1b1a1918  0x1f1e1d1c   ← clave bytes 16-31
+0x00000001  0x09000000  0x4a000000  0x00000000   ← counter=1, nonce del RFC 2.3.2
+```
+
+Este estado coincide exactamente con la Tabla 1 del RFC 8439 2.3.2
+
+**Estado después de la ronda 1** (segunda parada en `round_loop`):
+
+```
+0xcd52e917  0x85ab03b4  0xb3457395  0xf96de7dd
+0xc4b7cd22  0x5c2e187a  0xc95eb461  0x316c801a
+0x7bf7d740  0x7eddd644  0xf1a1bdf5  0x761246ca
+0x6b0d58a3  0x6798471a  0xd737f167  0xf173888d
+```
+
+Como se puede observar todos los 16 valores cambiaron drásticamente tras una sola
+ronda doble (columnas + diagonales), demostrando el buen funcionamiento del algoritmo.
+
+**Estado después de las 20 rondas** (parada en `round_end`, antes de la suma final):
+
+```
+0x837778ab  0xe238d763  0xa67ae21e  0x5950bb2f
+0xc4f2d0c7  0xfc62bb2f  0x8fa018fc  0x3f5ec7b7
+0x335271c2  0xf29489f3  0xeabda8fc  0x82e46ebd
+0xd19c12b4  0xb04e16de  0x9e83d0cb  0x4e3c50a2
+```
+
+Este estado coincide con el estado intermedio del RFC 8439 2.3.2 
+---
+## Evidencia 2 — Verificación del vector de prueba TV#1 contra el RFC
+
+Para verificar la corrección del keystream final se utilizó el **Test Vector #1** del
+Apéndice A.1 del RFC 8439 (clave=0x00×32, nonce=0x00×12, counter=0). Se colocó un
+breakpoint en la dirección `0x800050bc`, que corresponde a la primera instrucción de
+serialización de `round_end` — el punto donde `working_state` ya contiene el resultado
+final de `working_state += state`.
+
+```gdb
+break test_tv1_block
+continue
+break *0x800050bc
+continue
+x/16xw $s3
+```
+![Verificación TV#1 contra RFC 8439 Apéndice A.1](docs/Evidencia2.png)
+**Keystream generado** (inspeccionado con `x/16xw $s3` en `0x80016518`):
+
+```
+0xade0b876  0x903df1a0  0xe56a5d40  0x28bd8653
+0xb819d2bd  0x1aed8da0  0xccef36a8  0xc70d778b
+0x7c5941da  0x8d485751  0x3fe02477  0x374ad8b8
+0xf4b8436a  0x1ca11815  0x69b687c3  0x8665eeb2
+```
+**Valor esperado** según RFC 8439 Apéndice A.1 (en little-endian de 32 bits):
+
+```
+76 b8 e0 ad → 0xade0b876  
+a0 f1 3d 90 → 0x903df1a0  
+40 5d 6a e5 → 0xe56a5d40  
+53 86 bd 28 → 0x28bd8653  
+bd d2 19 b8 → 0xb819d2bd  
+a0 8d ed 1a → 0x1aed8da0  
+a8 36 ef cc → 0xccef36a8  
+8b 77 0d c7 → 0xc70d778b  
+da 41 59 7c → 0x7c5941da  
+51 57 48 8d → 0x8d485751  
+77 24 e0 3f → 0x3fe02477  
+b8 d8 4a 37 → 0x374ad8b8  
+6a 43 b8 f4 → 0xf4b8436a  
+15 18 a1 1c → 0x1ca11815  
+c3 87 b6 69 → 0x69b687c3  
+b2 ee 65 86 → 0x8665eeb2  
+```
+
+Los 64 bytes del keystream coinciden exactamente byte a byte con el RFC 8439 
+
+---
+## Evidencia 3 — Registros s0–s11 preservados (convenciones de llamada)
+
+Para verificar que `chacha20_block` respeta las convenciones de llamada RISC-V se
+inspeccionaron los registros `s0`–`s11` en dos momentos dentro de `test_tv1_block`:
+
+- **Antes del call** (`0x80000ff4`): instrucción `jal ra, chacha20_block`
+- **Después del ret** (`0x80000ff8`): primera instrucción tras el retorno
+
+```gdb
+break *0x80000ff4
+continue
+info registers s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11
+break *0x80000ff8
+continue
+info registers s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11
+```
+![Registros s0-s11 antes del call a chacha20_block](docs/Evidencia3oficial.png)
+![Registros s0-s11 después del retorno de chacha20_block](docs/Evidencia3oficialdos.png)
+
+**Comparación de registros antes y después:**
+
+| Registro | Antes del call | Después del ret | ¿Preservado? |
+|----------|---------------|-----------------|--------------|
+| `s0` | `0x80016638` | `0x80016638` | Sí |
+| `s1` | `0x800165d8` | `0x800165d8` | Sí |
+| `s2` | `0x80016598` | `0x80016598` | Sí |
+| `s3` | `0x80016518` | `0x80016518` | Sí |
+| `s4` | `0x0` | `0x0` | Sí |
+| `s5` | `0x0` | `0x0` | Sí |
+| `s6` | `0x9f74a669` | `0x9f74a669` | Sí |
+| `s7`–`s11` | `0x0` | `0x0` | Sí |
+
+Todos los registros callee-saved (`s0`–`s11`) tienen valores idénticos antes y después
+de la llamada a `chacha20_block`, confirmando que el prólogo y epílogo de la función
+guardan y restauran correctamente el estado del llamador según las convenciones RISC-V.
+
+---
+## Evidencia 4 — Incremento del contador entre bloques
+
+Para verificar el correcto manejo del contador se utilizó `test_chacha20_encrypt` (114 bytes
+= 2 bloques de 64 y 50 bytes respectivamente, con `counter` inicial = 1). Se colocó un
+breakpoint en la instrucción `sw t1, 48(s0)` (`0x800051e8`), que es donde el counter
+incrementado se escribe de vuelta al estado.
+
+```gdb
+break test_chacha20_encrypt
+continue
+break *0x800051e8
+continue
+x/xw $s0+48    ← counter después del bloque 1
+continue
+x/xw $s0+48    ← counter después del bloque 2
+```
+![Incremento del contador entre bloques en chacha20_encrypt](docs/Evidencia4.png)
+**Resultados observados:**
+
+| Momento | Dirección | Valor del counter |
+|---------|-----------|-------------------|
+| Después del bloque 1 | `0x800164ac` | `0x00000002` (1→2)|
+| Después del bloque 2 | `0x800164ac` | `0x00000003` (2→3)|
+
+El counter se incrementa correctamente en 1 por cada bloque de 64 bytes procesado,
+tal como especifica el RFC 8439 §2.3. Esto garantiza que cada bloque genera un keystream
+único, lo cual es fundamental para la seguridad del cifrado.
+
+> **Nota:** Durante esta sesión también se identificó un bug en el reseteo del puntero
+> `s4` al inicio de cada iteración (`addi s4, sp, 28` en lugar de `addi s4, sp, 32`).
+> Este bug se documenta en detalle en la sección **Bitácora de Bug**.
