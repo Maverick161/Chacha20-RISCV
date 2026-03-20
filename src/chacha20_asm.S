@@ -453,7 +453,7 @@
         addi t1, t1, 1              # counter += 1
         sw   t1, 48(s0)             # guardar counter
 
-        addi s4, sp, 28             # resetear s4 al inicio del keystream
+        addi s4, sp, 32             # apuntar s4 al inicio del keystrem (working_state[8)]
 
         j    for_loop               # siguiente iteracion
 
