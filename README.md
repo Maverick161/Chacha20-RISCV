@@ -2,17 +2,17 @@
 
 ## Introducción
 
-Este proyecto consiste en la implementación del algoritmo de cifrado **ChaCha20** utilizando ensamblador **RISC-V**, integrándolo con un programa principal desarrollado en lenguaje **C**.
+Este proyecto consiste en la implementación del algoritmo de cifrado ChaCha20 utilizando ensamblador RISC-V, integrándolo con un programa principal desarrollado en lenguaje C.
 
-El objetivo principal es demostrar la correcta implementación de algoritmos criptográficos a bajo nivel, aplicando conceptos fundamentales de arquitectura de computadoras como manejo de registros, convenciones de llamada, uso del *stack* e integración entre **C** y ensamblador.
+El objetivo principal es demostrar la correcta implementación del algoritmo ChaCha20, aplicando conceptos fundamentales de arquitectura de computadoras(manejos de registros, convenciones RISCV) e implementarlos en un entorno suministrado por el profesor.
 
-La implementación incluye el desarrollo de las funciones principales del algoritmo: `chacha20_quarter_round`, `chacha20_block` y `chacha20_encrypt`, las cuales permiten generar el *keystream* y realizar el cifrado y descifrado de mensajes de longitud arbitraria. La corrección del algoritmo se verifica mediante los vectores de prueba oficiales del **RFC 8439**, asegurando que los resultados coincidan exactamente con la especificación.
+La implementación incluye el desarrollo de las funciones principales del algoritmo: `chacha20_quarter_round`, `chacha20_block` y `chacha20_encrypt`, las cuales permiten generar el *keystream* y realizar el cifrado y descifrado de mensajes de longitud arbitraria. La corrección del algoritmo se verifica mediante los vectores de prueba oficiales del RFC 8439, asegurando que los resultados coincidan exactamente con la especificación.
 
-El proyecto se desarrolla dentro de un entorno **RISC-V** utilizando **QEMU**, **Docker** y **GDB**, permitiendo la compilación, ejecución y depuración del código. Además, se siguen buenas prácticas de desarrollo mediante el uso de **Git**, incluyendo desarrollo incremental por *branches*, commits estructurados y documentación técnica del diseño e implementación.
+El proyecto se desarrolla dentro de un entorno RISC-V utilizando QEMU, Docker y GDB, permitiendo la compilación, ejecución y depuración del código. Además, se siguen buenas prácticas de desarrollo mediante el uso de Git, incluyendo desarrollo incremental por *branches*, commits estructurados y documentación técnica del diseño e implementación.
 
 ## Estructura del proyecto
 
-El repositorio se encuentra organizado de manera modular, separando el código fuente, pruebas, documentación y archivos del entorno de ejecución. Esta organización permite mantener una clara separación entre la implementación del algoritmo, los archivos de soporte del entorno RISC-V y los materiales de referencia proporcionados.
+El repositorio se encuentra organizado de manera modular, separando el código fuente, pruebas, documentación y archivos del entorno de ejecución. Se organizó de esta manera para mantener una clara separación del algoritmo, los archivos de soporte y los materiales que fueron brindados mediante el repositorio del profesor.
 
 ```text
 rvqemu/
@@ -51,7 +51,7 @@ Para poder construir, ejecutar y depurar este proyecto es necesario contar con l
 - Docker: el proyecto se ejecuta dentro de un contenedor.
 - Sistema operativo: debe ser compatible con contenedores (Linux o el equivalente que permita ejecutar Docker).
 
-No es necesario instalar manualmente la *toolchain* de RISC-V, QEMU o GDB, ya que estas dependencias se encuentran configuradas dentro del contenedor definido en el **Dockerfile**. Este entorno incluye:
+No es necesario realizar instalaciones adicionales, ya que el compilador de RISCV, QEMU y GDB ya vienen configurados dentro del contenedor Docker.
 
 - Compilador `gcc-riscv64-unknown-elf`
 - `gdb-multiarch` para depuración
@@ -150,7 +150,7 @@ qemu-system-riscv32 -machine virt -nographic -bios none -kernel chacha20.elf
 
 ## Ejecución de pruebas y verificación con los vectores del RFC
 
-Para verificar el correcto funcionamiento de la implementación del algoritmo **ChaCha20**, se utilizaron los vectores de prueba oficiales definidos en el **RFC 8439**, los cuales permiten validar el funcionamiento del *quarter round*, la generación del bloque y el cifrado completo.
+Para verificar el correcto funcionamiento de la implementación del algoritmo ChaCha20, se utilizaron los vectores de prueba oficiales definidos en el RFC 8439, los cuales permiten validar el funcionamiento del *quarter round*, la generación del bloque y el cifrado completo.
 
 Para compilar el proyecto se deben seguir los pasos descritos en la sección anterior. Una vez generado el ejecutable, se ejecuta en QEMU:
 
@@ -180,7 +180,7 @@ Se probó el cifrado y descifrado de un mensaje de multiples bloques, verificand
 
 ## Instrucciones para abrir una sesión de depuración con GDB
 
-Para depurar el programa se utilizó `gdb-multiarch` junto con **QEMU**, permitiendo inspeccionar registros y memoria durante la ejecución del algoritmo.
+Para depurar el programa se utilizó `gdb-multiarch` junto con QEMU, permitiendo inspeccionar registros y memoria durante la ejecución del algoritmo.
 
 Compilar el proyecto.
 
@@ -212,3 +212,8 @@ target remote localhost:1234
     - c. Ver registros: `info registers`
     - d. Ejecutar paso a paso: `stepi`
     - e. Inspeccionar memoria: `x/16x $sp`
+
+## Referencias
+
+- RFC 8439: https://www.rfc-editor.org/rfc/rfc8439
+- RISC-V Calling Conventions: https://riscv.org/wp-content/uploads/2024/12/riscv-calling.pdf

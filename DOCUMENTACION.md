@@ -2,7 +2,7 @@
 
 ## Arquitectura del software
 
-El algoritmo ChaCha20 se diseñó mediante una separación clara entre una capa de control escrita en C y una capa de ejecución escrita en ensamblador RISC-V. Este diseño permite mantener una arquitectura modular, facilitar la depuración y aprovechar el ensamblador en las partes críticas del algoritmo, donde el control preciso de registros, memoria y flujo de ejecución resulta especialmente importante.
+El algoritmo ChaCha20 se diseñó mediante una separación clara entre una capa de control escrita en C y una capa de ejecución escrita en ensamblador RISC-V. Esta separación permite hacer cambios en una capa sin afectar la otra. Por ejemplo, si se necesita modificar cómo se imprime la salida, no hay que tocar el ensamblador, y si se cambia algo interno del algoritmo, el código de pruebas en C no se ve afectado.
 
 ---
 
@@ -20,8 +20,7 @@ El proyecto se organiza de forma que los componentes principales del sistema que
 - `Dockerfile`: define el entorno reproducible de compilación y depuración.
 - `run.sh`: script de apoyo para ejecución del sistema.
 
-Esta organización favorece la mantenibilidad del proyecto, ya que separa la lógica funcional, la infraestructura de compilación/ejecución y la evidencia documental.
-
+Esta organización hizo más fácil ubicar cada parte del proyecto: el código del algoritmo, los archivos de soporte para compilar y ejecutar, y las evidencias de pruebas y depuración.
 ---
 
 ## Separación entre capa C y capa ensamblador
@@ -38,7 +37,7 @@ La capa en C cumple con las funciones de orquestación y validación. Sus princi
 - Comparar salidas con vectores de prueba oficiales del RFC 8439.
 - Invocar las funciones implementadas en ensamblador.
 
-En esta capa no se implementa ningún detalle del algoritmo. Esto reduce la complejidad en el código de prueba y hace que la interfaz externa del módulo sea simple y clara.
+En esta capa no se implementa ningún detalle del algoritmo. Esto mantiene el código de pruebas independiente de los detalles internos del algoritmo. Y permite validar las pruebas que sean necesarias.
 
 ### Capa en ensamblador
 
@@ -55,7 +54,7 @@ En estas funciones se encuentran las operaciones fundamentales del cifrado: suma
 - Paso de argumentos según convención ABI.
 - Llamadas internas entre funciones.
 
-Esta división permite que el código de bajo nivel permanezca encapsulado, mientras que la capa superior en C conserva legibilidad y facilidad de prueba.
+De esta forma el código implementado en C queda limpio y es sencillo de leer, mientras que todo el detalle del algoritmo queda dentro del ensamblador.
 
 ---
 
@@ -69,11 +68,11 @@ void chacha20_block(uint32_t *state, uint8_t *output);
 void chacha20_encrypt(uint32_t *state, uint8_t *plaintext, uint8_t *ciphertext, uint32_t length);
 ```
 
-Estas interfaces fueron diseñadas para que la capa C no dependa de los detalles internos del ensamblador. Cada función tiene una responsabilidad definida:
+Las interfaces definen un punto de interacción entre C y ensamblador sin exponer detalles internos de implementación. Cada función tiene una responsabilidad definida:
 
 ### `chacha20_quarter_round`
 
-Recibe un arreglo `state` y cuatro índices enteros `a`, `b`, `c` y `d`. Su función es aplicar la transformación elemental *quarter round* sobre cuatro palabras del estado. Esta interfaz basada en índices facilita la reutilización de la rutina tanto para las rondas por columna como para las rondas diagonales, evitando tener que duplicar código o preparar múltiples punteros desde C. Para la implementación se utilizaron como referencia las operaciones definidas en el documento de especificaciones.
+Recibe un arreglo `state` y cuatro índices enteros `a`, `b`, `c` y `d`. Su función es aplicar la transformación elemental *quarter round* sobre cuatro palabras del estado. Esta interfaz basada en índices facilita la reutilización de la rutina tanto para las rondas por columna como para las rondas diagonales, evitando tener que duplicar la logica del algoritmo. Para la implementación se utilizaron como referencia las operaciones definidas en el documento de especificaciones.
 
 ### `chacha20_block`
 
@@ -95,7 +94,7 @@ Recibe el estado, un bloque de entrada `plaintext`, un bloque de salida `ciphert
 3. Aplicar XOR entre el keystream y el texto de entrada.
 4. Incrementar el contador del estado para cada bloque procesado.
 
-De esta manera, `chacha20_encrypt` reutiliza `chacha20_block` como primitiva interna, manteniendo una arquitectura jerárquica y limpia.
+De esta manera, `chacha20_encrypt` usa `chacha20_block` internamente para general el keystream de cada bloque.
 
 ---
 
@@ -103,19 +102,18 @@ De esta manera, `chacha20_encrypt` reutiliza `chacha20_block` como primitiva int
 
 ### Separar el control del algoritmo
 
-C se hace cargo de la construcción del estado, las pruebas y la salida por UART, mientras que la implementación del algoritmo se desarrolló en ensamblador. De esta manera se lograron las siguientes ventajas:
+C se hace cargo de la construcción del estado, las pruebas y la salida por UART, mientras que la implementación del algoritmo se desarrolló en ensamblador. Al realizar esta separcion se obtuvieron las siguientes ventajas:
 
-- El código en C es más claro para preparar pruebas y validar resultados.
-- El ensamblador se concentra únicamente en el algoritmo.
-- La depuración se vuelve más sencilla, porque el flujo de alto nivel y el núcleo del algoritmo están desacoplados.
-
+- El código en C solo se usa para validar pruebas y resultados.
+- En el ensamblador solo se implementa el agoritmo
+- La depuración se vuelve más sencilla.
 ### API mínima y estable
 
-El encabezado `chacha20.h` define una interfaz pequeña y concreta. Esto reduce el acoplamiento entre archivos y permite modificar detalles internos del ensamblador sin afectar la lógica de pruebas escrita en C.
+El encabezado `chacha20.h` define una interfaz pequeña y concreta. Esto evita dependencias directas entre el código de pruebas y la implementación interna.
 
 ### Implementar `quarter_round` con índices y no con punteros individuales
 
-Para la implementación de esta función era más sencillo usar punteros individuales; sin embargo, a la hora de crear la funcionalidad de `chacha20_block`, ese diseño no era el ideal. Se decidió implementar una solución usando índices sobre el arreglo de 16 palabras.
+Al principio implementé una versión con punteros individuales para entender cómo funcionaba el quarter round. Cuando fui a implementar chacha20_block me di cuenta que era mucho más práctico usar índices sobre el arreglo, porque así podía reutilizar la misma función para las rondas de columna y las diagonales sin duplicar código
 
 ### Usar un `working_state` en el stack
 
@@ -123,7 +121,7 @@ En `chacha20_block` se reserva espacio en el stack para copiar el estado origina
 
 ### Procesar el cifrado en bloques de 64 bytes
 
-La función `chacha20_encrypt` genera keystream por bloques completos de 64 bytes, lo cual coincide con la naturaleza del algoritmo ChaCha20. Para longitudes no múltiples de 64, la rutina procesa únicamente los bytes restantes del bloque final. Esto mejora la generalidad de la implementación.
+La función `chacha20_encrypt` genera keystream por bloques completos de 64 bytes, lo cual coincide con la naturaleza del algoritmo ChaCha20. Para longitudes no múltiples de 64, la rutina procesa únicamente los bytes restantes del bloque final.Esto permite cifrar mensajes de cualquier longitud.
 
 # Mapeo entre el estado de 16 palabras y los registros RISC-V
 
@@ -136,7 +134,7 @@ fue diferente para cada función según su responsabilidad.
 
 ## `chacha20_quarter_round`
 
-Esta función recibe cuatro **índices** sobre el arreglo `state[]` y opera únicamente sobre esas
+Esta función recibe cuatro índices sobre el arreglo `state[]` y opera únicamente sobre esas
 cuatro palabras a la vez.
 
 | Registro | Rol en la función | Justificación |
@@ -154,7 +152,7 @@ cuatro palabras a la vez.
 | `a5`, `a6`, `a7` | Direcciones de escritura (`store`) | Reutilizan los offsets ya calculados en `a1..a3` |
 | `t4` | Dirección de escritura para `state[d]` | `a4` ya modificado, se usa `t4` para el `sw` final |
 
-Esta función **no tiene prólogo ni epílogo** porque solo usa registros `t` (temporales) y `a`
+Esta función no tiene prólogo ni epílogo porque solo usa registros `t` (temporales) y `a`
 (argumentos), todos caller-saved. El llamador (`chacha20_block`) ya los guarda si los necesita.
 
 ### Flujo de datos en `quarter_round`
@@ -183,8 +181,8 @@ sw   t0, 0(a5)        # state[a] = t0
 
 ## `chacha20_block`
 
-Esta es la función más compleja. El estado de 16 palabras **no cabe en registros** durante las
-20 rondas, por lo que se almacena en el **stack** como `working_state`. Solo los punteros y el
+Esta es la función más compleja. El estado de 16 palabras no cabe en registros durante las
+20 rondas, por lo que se almacena en el stack como `working_state`. Solo los punteros y el
 contador de rondas viven en registros `s` (callee-saved).
 
 ### Layout del stack frame (84 bytes)
@@ -388,7 +386,7 @@ Este estado coincide con el estado intermedio del RFC 8439 2.3.2
 ---
 ## Evidencia 2 — Verificación del vector de prueba TV#1 contra el RFC
 
-Para verificar la corrección del keystream final se utilizó el **Test Vector #1** del
+Para verificar la corrección del keystream final se utilizó el Test Vector #1 del
 Apéndice A.1 del RFC 8439 (clave=0x00×32, nonce=0x00×12, counter=0). Se colocó un
 breakpoint en la dirección `0x800050bc`, que corresponde a la primera instrucción de
 serialización de `round_end` — el punto donde `working_state` ya contiene el resultado
@@ -496,12 +494,11 @@ x/xw $s0+48    ← counter después del bloque 2
 | Después del bloque 2 | `0x800164ac` | `0x00000003` (2→3)|
 
 El counter se incrementa correctamente en 1 por cada bloque de 64 bytes procesado,
-tal como especifica el RFC 8439 §2.3. Esto garantiza que cada bloque genera un keystream
-único, lo cual es fundamental para la seguridad del cifrado.
+tal como especifica el RFC 8439 §2.3. Esto confirma que el counter se maneja bien entre bloques.
 
 > **Nota:** Durante esta sesión también se identificó un bug en el reseteo del puntero
 > `s4` al inicio de cada iteración (`addi s4, sp, 28` en lugar de `addi s4, sp, 32`).
-> Este bug se documenta en detalle en la sección **Bitácora de Bug**.
+> Este bug se documenta en detalle en la sección Bitácora de Bug.
 
 # Bitácora de Bug
 
@@ -568,7 +565,7 @@ por estar más abajo en la función).
 
 ### Por qué los tests pasaban a pesar del bug
 
-El bug solo se activaba a partir del **segundo bloque** de cada llamada a
+El bug solo se activaba a partir del segundo bloque de cada llamada a
 `chacha20_encrypt`, cuando `s4` necesitaba resetearse. En el primer bloque,
 `s4` se inicializaba correctamente desde el prólogo con `sp+32`.
 
@@ -586,10 +583,44 @@ Se aplicó la corrección con `sed` y se verificó con `grep`:
 ![Código corregido: ambas líneas con sp+32](docs/Nobug.png)
 
 ### Lección aprendida
+Lo que aprendí con este bug es que en ensamblador es muy fácil equivocarse con los offsets del stack si no se tiene una claridad a la hora de crear los registros. En este caso había dos líneas que referenciaban el mismo buffer pero con offsets distintos, y eso fue suficiente para introducir un error sutil
 
-Al diseñar el stack frame de una función en ensamblador, es crítico documentar
-explícitamente cada offset y verificar que todas las referencias al mismo dato
-usen el mismo offset. Una inconsistencia de 4 bytes entre la inicialización y
-el reseteo de un puntero puede introducir bugs sutiles que no siempre son
-detectables con los vectores de prueba disponibles, especialmente cuando la
-corrupción ocurre en regiones del stack que coinciden con valores no significativos.
+# Análisis de Resultados
+
+## Resumen de resultados obtenidos
+
+La implementación de ChaCha20 en ensamblador RISC-V fue validada contra un total de
+**11 vectores de prueba oficiales** del RFC 8439, abarcando las tres funciones
+principales del algoritmo. Todos los tests produjeron resultados correctos tras la
+corrección del bug documentado en la sección anterior.
+
+| Test | Función | Fuente RFC | Resultado |
+|------|---------|------------|-----------|
+| Quarter Round | `chacha20_quarter_round` | 2.1.1 | Correcto |
+| Block 2.3.2 | `chacha20_block` | 2.3.2 | Correcto |
+| Encrypt 2.4.2 | `chacha20_encrypt` | 2.4.2 | Correcto |
+| TV#1 (key=0, ctr=0) | `chacha20_block` | Apéndice A.1 | Correcto |
+| TV#2 (key=0, ctr=1) | `chacha20_block` | Apéndice A.1 | Correcto |
+| TV#3 (key byte31=0x01) | `chacha20_block` | Apéndice A.1 | Correcto |
+| TV#4 (key byte1=0xff) | `chacha20_block` | Apéndice A.1 | Correcto |
+| TV#5 (nonce byte11=0x02) | `chacha20_block` | Apéndice A.1 | Correcto |
+| A.2 TV#1 (64 bytes) | `chacha20_encrypt` | Apéndice A.2 | Correcto |
+| A.2 TV#2 (375 bytes) | `chacha20_encrypt` | Apéndice A.2 | Correcto |
+| A.2 TV#3 (127 bytes, ctr=42) | `chacha20_encrypt` | Apéndice A.2 | Correcto |
+
+---
+
+## Conclusión
+
+La implementación cumple con todos los requisitos funcionales establecidos en
+el RFC 8439 y en el enunciado del proyecto. El algoritmo ChaCha20 fue
+implementado exitosamente en ensamblador RISC-V respetando las
+convenciones de llamada, con un manejo correcto del stack frame en las tres
+funciones y verificado exhaustivamente con los vectores de prueba oficiales.
+
+La parte más difícil del proyecto fue entender el algoritmo como tal y luego traducirlo correctamente a ensamblador. El bug del stack frame fue un buen ejemplo de eso — un error de 4 bytes en un offset que era difícil de ver solo leyendo el código. Aprendí que antes de escribir ensamblador conviene tener muy claro en papel cómo está organizado el stack, porque un offset equivocado puede ser muy difícil de encontrar después.
+
+## Referencias
+
+- RFC 8439: https://www.rfc-editor.org/rfc/rfc8439
+- RISC-V Calling Conventions: https://riscv.org/wp-content/uploads/2024/12/riscv-calling.pdf
