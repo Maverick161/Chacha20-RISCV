@@ -502,3 +502,94 @@ tal como especifica el RFC 8439 §2.3. Esto garantiza que cada bloque genera un 
 > **Nota:** Durante esta sesión también se identificó un bug en el reseteo del puntero
 > `s4` al inicio de cada iteración (`addi s4, sp, 28` en lugar de `addi s4, sp, 32`).
 > Este bug se documenta en detalle en la sección **Bitácora de Bug**.
+
+# Bitácora de Bug
+
+## Bug: Reseteo incorrecto del puntero de keystream en `chacha20_encrypt`
+
+### Descripción
+
+Durante el desarrollo de `chacha20_encrypt` se introdujo un error en el offset usado
+para resetear el puntero `s4` al inicio del buffer de keystream al comienzo de cada
+nueva iteración del loop principal.
+
+El stack frame de `chacha20_encrypt` tiene la siguiente estructura:
+
+```
+sp+ 0  → ra
+sp+ 4  → s0   (puntero a state)
+sp+ 8  → s1   (cursor plaintext)
+sp+12  → s2   (cursor ciphertext)
+sp+16  → s3   (bytes restantes)
+sp+20  → s4   (cursor keystream)
+sp+24  → s5   (constante 64)
+sp+28  → s6   (bytes a procesar en la iteración actual)   ← aquí está s6
+sp+32  → keystream[0..63]  (64 bytes)                     ← aquí empieza el keystream
+```
+
+El keystream buffer comienza en `sp+32`, pero la instrucción de reseteo usaba `sp+28`:
+
+```asm
+Codigo incorrecto: apunta a donde está guardado s6, no al keystream
+addi s4, sp, 28    # resetear s4 al inicio del keystream
+```
+### Detección
+
+El bug fue detectado durante el análisis del código fuente al revisar el stack frame
+de `chacha20_encrypt`. Al comparar el offset de inicialización de `s4` en el prólogo
+con el offset de reseteo al final del `xor_loop`, se encontró una inconsistencia:
+
+```asm
+addi s4, sp, 32   # inicialización en el prólogo   ← correcto (sp+32)
+...
+addi s4, sp, 28   # reseteo en xor_loop            ← incorrecto (sp+28)
+```
+
+La inicialización en el prólogo apuntaba correctamente a `sp+32`, pero el reseteo
+al final de cada iteración apuntaba a `sp+28`, que es la posición donde el epílogo
+guarda `s6`, no donde comienza el keystream.
+
+Se utilizó `grep` para localizar ambas ocurrencias en el archivo fuente y confirmar
+la discrepancia:
+
+![Código con el bug: ambas líneas con sp+28](docs/BUg.png)
+Como se observa en la captura, con el bug presente ambas líneas apuntan a `sp+28`:
+- **Línea 417**: `addi s4, sp, 28  #empieza el keystream` ← inicialización incorrecta
+- **Línea 456**: `addi s4, sp, 28  # resetear s4 al inicio del keystream` ← reseteo incorrecto
+
+Adicionalmente, se inspeccionó el binario con GDB usando `disassemble chacha20_encrypt`
+para verificar cómo el compilador tradujo el código:
+
+![Disassemble de chacha20_encrypt en GDB](docs/Disassemble.png)
+El disassemble muestra que en `0x8000518c <+52>` la instrucción es `addi s4,sp,32`,
+confirmando que el prólogo inicializa `s4` correctamente. El bug estaba únicamente
+en el reseteo dentro del `xor_loop` (no visible en este fragmento del disassemble
+por estar más abajo en la función).
+
+### Por qué los tests pasaban a pesar del bug
+
+El bug solo se activaba a partir del **segundo bloque** de cada llamada a
+`chacha20_encrypt`, cuando `s4` necesitaba resetearse. En el primer bloque,
+`s4` se inicializaba correctamente desde el prólogo con `sp+32`.
+
+A partir del segundo bloque, `s4` apuntaba a `sp+28` — la posición de `s6` en el
+stack — en lugar de `sp+32` donde comienza el keystream. Sin embargo, dado que
+`chacha20_block` escribe el keystream comenzando en `sp+32` y el epílogo de
+`chacha20_block` restaura los registros `s` antes de retornar, la región `sp+28`
+podía contener valores que casualmente no alteraban el resultado final en los
+vectores de prueba específicos del RFC.
+### Corrección
+
+La corrección consistió en cambiar el offset de `sp+28` a `sp+32` en la instrucción
+de reseteo dentro del `xor_loop`.
+Se aplicó la corrección con `sed` y se verificó con `grep`:
+![Código corregido: ambas líneas con sp+32](docs/Nobug.png)
+
+### Lección aprendida
+
+Al diseñar el stack frame de una función en ensamblador, es crítico documentar
+explícitamente cada offset y verificar que todas las referencias al mismo dato
+usen el mismo offset. Una inconsistencia de 4 bytes entre la inicialización y
+el reseteo de un puntero puede introducir bugs sutiles que no siempre son
+detectables con los vectores de prueba disponibles, especialmente cuando la
+corrupción ocurre en regiones del stack que coinciden con valores no significativos.
